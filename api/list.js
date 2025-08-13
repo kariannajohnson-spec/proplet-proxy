@@ -1,38 +1,39 @@
 export default async function handler(req, res) {
   try {
     const baseId = process.env.AIRTABLE_BASE_ID;
-    const token = process.env.AIRTABLE_PAT;
+    const token  = process.env.AIRTABLE_PAT;
 
-    // Customize these if your table/fields differ:
     const TABLE = process.env.AIRTABLE_PROPERTIES_TABLE || "Properties";
-    const VIEW = process.env.AIRTABLE_PROPERTIES_VIEW || ""; // leave empty if you don't have "Public"
+    const VIEW  = process.env.AIRTABLE_PROPERTIES_VIEW   || ""; // optional
 
     const pageSize = Math.min(Number(req.query.pageSize || 24), 50);
-    const offset = req.query.offset || undefined;
+    const offset   = req.query.offset || undefined;
 
     const url = new URL(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(TABLE)}`);
     url.searchParams.set("pageSize", String(pageSize));
-    if (VIEW) url.searchParams.set("view", VIEW);
     url.searchParams.set("sort[0][field]", "Title");
     url.searchParams.set("sort[0][direction]", "asc");
+    if (VIEW) url.searchParams.set("view", VIEW);
     if (offset) url.searchParams.set("offset", offset);
 
-    const resp = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-
-    if (!resp.ok) {
-      const t = await resp.text();
-      return res.status(resp.status).json({ error: t || "Airtable error (list)" });
+    const r = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) {
+      const t = await r.text();
+      return res.status(r.status).json({ error: t || "Airtable error (list)" });
     }
 
-    const data = await resp.json();
+    const data = await r.json();
 
-    const items = (data.records || []).map(r => {
-      const f = r.fields || {};
-      const hero = Array.isArray(f.Photos) && f.Photos.length ? f.Photos[0].url : null;
+    const items = (data.records || []).map(rec => {
+      const f = rec.fields || {};
+      const imgs = (Array.isArray(f.Images) && f.Images.length
+        ? f.Images
+        : (Array.isArray(f.Photos) ? f.Photos : [])
+      );
+      const hero = imgs.length ? imgs[0].url : null;
+
       return {
-        id: r.id,
+        id: rec.id,
         slug: f.Slug || "",
         title: f.Title || "",
         city: f.City || "",
