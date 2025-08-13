@@ -6,7 +6,6 @@ export default async function handler(req, res) {
     const baseId = process.env.AIRTABLE_BASE_ID;
     const token  = process.env.AIRTABLE_PAT;
 
-    // Override these via env if your names differ
     const TABLE = process.env.AIRTABLE_PROPERTIES_TABLE || "Properties";
     const VIEW  = process.env.AIRTABLE_PROPERTIES_VIEW   || ""; // optional
 
@@ -27,34 +26,39 @@ export default async function handler(req, res) {
     if (!rec) return res.status(404).json({ error: "Property Not Found" });
 
     const f = rec.fields || {};
-    const images = (Array.isArray(f.Images) && f.Images.length
-      ? f.Images
-      : (Array.isArray(f.Photos) ? f.Photos : [])
-    ).map(a => a.url);
 
+    // Only include your fields (exact names)
+    const allow = new Set([
+      "Title","Slug","Images","Price","Price per m²","Square Meters","Bedrooms","Bathrooms",
+      "Property Type","City","Province/Region","Address","Google Maps Link","Distance from Ocean (km)",
+      "Distance from Mountains (km)","Distance from Train Station (km)","Distance from Airport (km)",
+      "Biking Distance to Beach","Walking Distance to Train","Things That Make it Perfect","Red Flags",
+      "Must-Haves","Nice-to-Haves","Renovation Needed","Source","Original Listing","Status","Date Added",
+      "Updated","Agent Name","Agent Phone","Agent Email","Launguage","Location Score","Feature Score",
+      "Price Score","Overall Relevance Score","My Rating","My Partner's Rating","Agreement Rating",
+      "Viewing Schedule"
+    ]);
+    const fields = {};
+    for (const k in f) if (allow.has(k)) fields[k] = f[k];
+
+    // Images array (URLs) + hero
+    const images = (Array.isArray(f["Images"]) ? f["Images"] : []).map(a => a.url);
     const hero = images[0] || null;
 
-    res.setHeader("Cache-Control", "s-maxage=60, stale-while-revalidate=600");
-    return res.json({
-      // flattened (easy for frontends)
+    // Flatten a few commonly-used fields for the Squarespace detail page
+    const flat = {
       id: rec.id,
-      slug: f.Slug || "",
-      title: f.Title || "",
-      city: f.City || "",
-      address: f.Address || "",
-      price: f.Price ?? null,
-      beds: f.Beds ?? null,
-      baths: f.Baths ?? null,
-      sqft: f.SqFt ?? null,
-      description: f.Description || "",
+      slug: f["Slug"] || "",
+      title: f["Title"] || "",
+      city: f["City"] || "",
+      price: f["Price"] ?? null,
+      description: f["Things That Make it Perfect"] || "", // or swap to another text field you prefer
       hero,
-      images,
-      features: f.Features || [],
-      avgRating: f["Avg Rating"] ?? null,
+      images
+    };
 
-      // keep original fields for compatibility with your current page code
-      fields: f
-    });
+    res.setHeader("Cache-Control", "s-maxage=60, stale-while-revalidate=600");
+    return res.json({ ...flat, fields });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error (property)" });
