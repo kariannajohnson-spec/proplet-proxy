@@ -1,23 +1,31 @@
 export default async function handler(req, res) {
   try {
+    const baseId = process.env.AIRTABLE_BASE_ID;
+    const token = process.env.AIRTABLE_PAT;
+    const TABLE = process.env.AIRTABLE_PROPERTIES_TABLE || "Properties";
+    const REVIEWS = process.env.AIRTABLE_REVIEWS_TABLE || "Reviews";
+    const VIEW = process.env.AIRTABLE_PROPERTIES_VIEW || ""; // optional
+
     if (req.method === "GET") {
       const { slug } = req.query;
       if (!slug) return res.status(400).json({ error: "Missing slug" });
 
-      const baseId = process.env.AIRTABLE_BASE_ID;
-      const token = process.env.AIRTABLE_PAT;
+      const formula = `LOWER({Slug})='${String(slug).toLowerCase().replace(/'/g, "''")}'`;
+      const propUrl = new URL(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(TABLE)}`);
+      propUrl.searchParams.set("filterByFormula", formula);
+      propUrl.searchParams.set("maxRecords", "1");
+      if (VIEW) propUrl.searchParams.set("view", VIEW);
 
-      // 1) Find the property by slug
-      const params = new URLSearchParams({
-        filterByFormula: `LOWER({Slug})='${String(slug).toLowerCase().replace(/'/g, "''")}'`,
-        maxRecords: "1"
-      });
-      const propResp = await fetch(`https://api.airtable.com/v0/${baseId}/Properties?${params}`, {
+      const propResp = await fetch(propUrl.toString(), {
         headers: { Authorization: `Bearer ${token}` }
       });
+      if (!propResp.ok) {
+        const t = await propResp.text();
+        return res.status(propResp.status).json({ error: t || "Airtable error (reviews/property)" });
+      }
       const propData = await propResp.json();
       const prop = propData.records?.[0];
-      if (!prop) return res.status(404).json({ error: "Property not found" });
+      if (!prop) return res.status(404).json({ error: "Property Not Found" });
 
       const reviewIds = Array.isArray(prop.fields.Reviews) ? prop.fields.Reviews : [];
       if (!reviewIds.length) {
@@ -25,16 +33,21 @@ export default async function handler(req, res) {
         return res.json({ reviews: [] });
       }
 
-      // 2) Pull those reviews
-      const csv = reviewIds.join(",");
-      const revParams = new URLSearchParams({
-        filterByFormula: `SEARCH(RECORD_ID(),'${csv}')`,
-        maxRecords: "50",
-        sort: '[{ "field": "Created At", "direction": "desc" }]'
-      });
-      const revResp = await fetch(`https://api.airtable.com/v0/${baseId}/Reviews?${revParams}`, {
+      // Build OR(RECORD_ID()='rec1', RECORD_ID()='rec2', ...)
+      const or = `OR(${reviewIds.map(id => `RECORD_ID()='${id}'`).join(",")})`;
+      const revUrl = new URL(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(REVIEWS)}`);
+      revUrl.searchParams.set("filterByFormula", or);
+      revUrl.searchParams.set("maxRecords", "50");
+      revUrl.searchParams.set("sort[0][field]", "Created At");
+      revUrl.searchParams.set("sort[0][direction]", "desc");
+
+      const revResp = await fetch(revUrl.toString(), {
         headers: { Authorization: `Bearer ${token}` }
       });
+      if (!revResp.ok) {
+        const t = await revResp.text();
+        return res.status(revResp.status).json({ error: t || "Airtable error (reviews/list)" });
+      }
       const revData = await revResp.json();
 
       const reviews = (revData.records || []).map(r => ({
@@ -50,7 +63,6 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
-      // Forward to Make webhook so secrets stay server-side
       const webhookUrl = process.env.AIRTABLE_MAKE_WEBHOOK_URL;
       if (!webhookUrl) return res.status(500).json({ error: "Webhook not configured" });
 
@@ -71,9 +83,9 @@ export default async function handler(req, res) {
     }
 
     res.setHeader("Allow", "GET, POST");
-    res.status(405).end("Method Not Allowed");
+    return res.status(405).end("Method Not Allowed");
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: "Server error (reviews)" });
   }
 }
